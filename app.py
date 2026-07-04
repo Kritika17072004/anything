@@ -1,97 +1,129 @@
 import streamlit as st
 import yfinance as yf
-import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
 
 st.set_page_config(
-    page_title="Stock Price Dashboard",
+    page_title="Stock Dashboard",
     page_icon="📈",
     layout="wide"
 )
 
-st.title("📈 Stock Price Dashboard")
-st.write("Fetch stock market data using Yahoo Finance (yfinance).")
+st.title("📈 Yahoo Finance Stock Dashboard")
 
-# Sidebar
+st.sidebar.header("Settings")
+
 ticker = st.sidebar.text_input(
-    "Enter Stock Ticker",
+    "Ticker Symbol",
     value="AAPL"
-).upper()
+).upper().strip()
 
 period = st.sidebar.selectbox(
-    "Select Time Period",
-    (
+    "Time Period",
+    [
         "1mo",
         "3mo",
         "6mo",
         "1y",
         "2y",
         "5y",
+        "10y",
         "max"
-    ),
-    format_func=lambda x: {
-        "1mo": "1 Month",
-        "3mo": "3 Months",
-        "6mo": "6 Months",
-        "1y": "1 Year",
-        "2y": "2 Years",
-        "5y": "5 Years",
-        "max": "Max"
-    }[x]
+    ]
 )
 
-# Download data
-data = yf.download(
-    ticker,
-    period=period,
-    progress=False,
-    auto_adjust=True
-)
 
-if data.empty:
+@st.cache_data(show_spinner=False)
+def load_data(symbol, period):
+    df = yf.download(
+        symbol,
+        period=period,
+        auto_adjust=True,
+        progress=False
+    )
+
+    if df.empty:
+        return None
+
+    # Fix for latest yfinance MultiIndex columns
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    df = df.reset_index()
+
+    return df
+
+
+with st.spinner("Fetching data..."):
+    data = load_data(ticker, period)
+
+if data is None:
     st.error("No data found. Please check the ticker symbol.")
     st.stop()
 
-st.subheader(f"{ticker} Closing Price")
+required_columns = ["Date", "Close"]
 
-fig = px.line(
-    data,
-    x=data.index,
-    y="Close",
-    title=f"{ticker} Stock Price ({period})"
+for col in required_columns:
+    if col not in data.columns:
+        st.error(f"Missing required column: {col}")
+        st.write(data.columns.tolist())
+        st.stop()
+
+fig = go.Figure()
+
+fig.add_trace(
+    go.Scatter(
+        x=data["Date"],
+        y=data["Close"],
+        mode="lines",
+        name="Close Price"
+    )
 )
 
 fig.update_layout(
+    title=f"{ticker} Closing Price ({period})",
     xaxis_title="Date",
     yaxis_title="Price",
-    hovermode="x unified"
+    hovermode="x unified",
+    template="plotly_white",
+    height=600
 )
 
 st.plotly_chart(fig, use_container_width=True)
 
-# Display latest metrics
 latest = data.iloc[-1]
 previous = data.iloc[-2] if len(data) > 1 else latest
 
 change = latest["Close"] - previous["Close"]
-pct_change = (change / previous["Close"]) * 100 if previous["Close"] != 0 else 0
+percent = (change / previous["Close"]) * 100 if previous["Close"] != 0 else 0
 
-col1, col2, col3 = st.columns(3)
+c1, c2, c3 = st.columns(3)
 
-col1.metric(
+c1.metric(
     "Latest Close",
     f"${latest['Close']:.2f}"
 )
 
-col2.metric(
+c2.metric(
     "Daily Change",
     f"{change:.2f}",
-    f"{pct_change:.2f}%"
+    f"{percent:.2f}%"
 )
 
-col3.metric(
-    "Volume",
-    f"{int(latest['Volume']):,}"
-)
+if "Volume" in data.columns:
+    c3.metric(
+        "Volume",
+        f"{int(latest['Volume']):,}"
+    )
+else:
+    c3.metric(
+        "Volume",
+        "N/A"
+    )
 
 st.subheader("Historical Data")
-st.dataframe(data)
+
+st.dataframe(
+    data,
+    use_container_width=True
+)
